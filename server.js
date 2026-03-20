@@ -18,7 +18,8 @@ const app = express();
 // Replace the URL with your actual Vercel frontend URL once deployed
 app.use(cors({
   origin: [
-    "http://localhost:5173", 
+    "http://localhost:5173",
+    "http://localhost:5174", 
     "https://your-frontend-name.vercel.app" // 🌟 ADD YOUR VERCEL URL HERE
   ],
   credentials: true
