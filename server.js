@@ -14,40 +14,39 @@ const adRoutes = require('./routes/adRoutes');
 
 const app = express();
 
-// --- 2. UPDATED CORS (The "Unblocker") ---
-// Using origin: true automatically allows whatever URL is hitting the API
-// This prevents 404/CORS errors during your fast deployment phase.
+// --- 2. UPDATED CORS ---
 app.use(cors({
-  origin: true, 
+  origin: true, // Auto-allows localhost during dev and Vercel during production
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+// Increase limit for Base64 image uploads (important for your Ad Manager)
 app.use(express.json({ limit: '10mb' }));
 
-// --- 3. DATABASE CONNECTION ---
-// We add options to ensure the connection is stable on Atlas
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
+// --- 3. DATABASE CONNECTION (FIXED FOR NEWER MONGOOSE) ---
+// Note: useNewUrlParser and useUnifiedTopology are removed to fix your error
+mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB Connected to Atlas'))
-  .catch((err) => console.log('❌ DB Error:', err));
+  .catch((err) => {
+    console.log('❌ DB Error details:', err.message);
+    process.exit(1); // Kill the server if DB doesn't connect
+  });
 
 // --- 4. USE ROUTES ---
-// Double check your frontend fetch matches these EXACT strings
 app.use('/api/products', productRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/auth', authRoutes); 
 app.use('/api/vouchers', voucherRoutes);
 app.use('/api/ads', adRoutes);
 
-// Test Route (Visit your-url.onrender.com/ to see this)
+// Test Route
 app.get('/', (req, res) => {
   res.json({ 
     message: '🚀 FeedTrace API is Live!',
-    database: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
+    database: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
+    timestamp: new Date().toISOString()
   });
 });
 
