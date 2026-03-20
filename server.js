@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
 
-// --- 1. LOAD ENVIRONMENT VARIABLES FIRST! ---
+// --- 1. LOAD ENVIRONMENT VARIABLES ---
 dotenv.config(); 
 
 const productRoutes = require('./routes/productRoutes');
@@ -14,39 +14,44 @@ const adRoutes = require('./routes/adRoutes');
 
 const app = express();
 
-// --- 2. PRODUCTION CORS SETTINGS ---
-// Replace the URL with your actual Vercel frontend URL once deployed
+// --- 2. UPDATED CORS (The "Unblocker") ---
+// Using origin: true automatically allows whatever URL is hitting the API
+// This prevents 404/CORS errors during your fast deployment phase.
 app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "http://localhost:5174", 
-    "https://your-frontend-name.vercel.app" // 🌟 ADD YOUR VERCEL URL HERE
-  ],
-  credentials: true
+  origin: true, 
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json({ limit: '10mb' }));
 
-// Database Connection
-mongoose.connect(process.env.MONGO_URI)
-  .then((conn) => {
-    console.log('✅ MongoDB Connected');
-  })
+// --- 3. DATABASE CONNECTION ---
+// We add options to ensure the connection is stable on Atlas
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+  .then(() => console.log('✅ MongoDB Connected to Atlas'))
   .catch((err) => console.log('❌ DB Error:', err));
 
-// Use Routes
+// --- 4. USE ROUTES ---
+// Double check your frontend fetch matches these EXACT strings
 app.use('/api/products', productRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/auth', authRoutes); 
 app.use('/api/vouchers', voucherRoutes);
 app.use('/api/ads', adRoutes);
 
-// Test Route
+// Test Route (Visit your-url.onrender.com/ to see this)
 app.get('/', (req, res) => {
-  res.send('🚀 FeedTrace API is Live and Running!');
+  res.json({ 
+    message: '🚀 FeedTrace API is Live!',
+    database: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected"
+  });
 });
 
-// --- 3. BIND TO 0.0.0.0 FOR CLOUD HOSTS ---
+// --- 5. BIND TO PORT ---
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on Port ${PORT}`);
