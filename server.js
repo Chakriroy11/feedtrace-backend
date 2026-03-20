@@ -16,22 +16,22 @@ const app = express();
 
 // --- 2. UPDATED CORS ---
 app.use(cors({
-  origin: true, // Auto-allows localhost during dev and Vercel during production
+  origin: true, 
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Increase limit for Base64 image uploads (important for your Ad Manager)
-app.use(express.json({ limit: '10mb' }));
+// 🚀 CRITICAL FIX: Increase limit to 50mb to handle multiple Base64 images in one request
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// --- 3. DATABASE CONNECTION (FIXED FOR NEWER MONGOOSE) ---
-// Note: useNewUrlParser and useUnifiedTopology are removed to fix your error
+// --- 3. DATABASE CONNECTION ---
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB Connected to Atlas'))
   .catch((err) => {
     console.log('❌ DB Error details:', err.message);
-    process.exit(1); // Kill the server if DB doesn't connect
+    process.exit(1); 
   });
 
 // --- 4. USE ROUTES ---
