@@ -23,6 +23,7 @@ const performOCRCheck = async (imageBase64, orderId, purchaseDate) => {
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
     const buffer = Buffer.from(base64Data, 'base64');
 
+    // Tesseract processing (CPU heavy)
     const { data: { text } } = await Tesseract.recognize(buffer, 'eng');
     const cleanText = text.toLowerCase();
 
@@ -39,7 +40,7 @@ const performOCRCheck = async (imageBase64, orderId, purchaseDate) => {
   }
 };
 
-// --- 2. ADD REVIEW ROUTE ---
+// --- 2. ADD REVIEW ROUTE (OPTIMIZED FOR SPEED) ---
 router.post('/add', async (req, res) => {
   try {
     const { 
@@ -48,50 +49,39 @@ router.post('/add', async (req, res) => {
       usageContext 
     } = req.body;
 
-    let trustScore = 0;
-    let flags = [];
-
-    // Layer 1: Word Count
+    // --- Fast Validations ---
     const wordCount = comment.trim().split(/\s+/).length;
     if (wordCount < 10) { 
       return res.status(400).json({ error: "Review is too short. Please write at least 10 words." });
     }
-    trustScore += 20;
 
-    // Layer 2: Metadata
     const purchase = new Date(purchaseDate);
-    const today = new Date();
-    const diffDays = Math.ceil(Math.abs(today - purchase) / (1000 * 60 * 60 * 24));
-    
-    if (diffDays > 90) return res.status(400).json({ error: "Purchase date is older than 90 days." });
-    if (orderId.length < 5) flags.push("Suspicious Order ID format");
-    else trustScore += 20;
+    if (Math.ceil(Math.abs(new Date() - purchase) / (1000 * 60 * 60 * 24)) > 90) {
+      return res.status(400).json({ error: "Purchase date is older than 90 days." });
+    }
 
-    // --- 🚨 LAYER 3: OCR (STRICT MODE APPLIED) 🚨 ---
+    // --- Heavy OCR Task ---
     let ocrResult = { text: '', score: 0 };
+    let trustScore = 20; // Base score
+    let flags = [];
+
     if (bill) {
       console.log("Processing OCR...");
       ocrResult = await performOCRCheck(bill, orderId, purchaseDate);
       
       if (ocrResult.score === 0) {
-        flags.push("CRITICAL: Uploaded image does not look like a valid bill.");
+        flags.push("CRITICAL: Invalid bill image.");
         trustScore = 0; 
       } else {
         trustScore += ocrResult.score;
       }
     }
 
-    // Layer 4: Context
     if (usageContext && usageContext.reason && usageContext.issue && usageContext.feature) {
       if (trustScore > 0) trustScore += 20; 
-    } else {
-      flags.push("Missing contextual answers");
     }
 
-    // Layer 5: Status
-    let status = 'pending';
-    if (trustScore < 40) status = 'flagged';
-
+    // --- Save to DB ---
     const newReview = new Review({
       productId, productName, user, email, rating, comment, 
       purchaseDate, platform, orderId,
@@ -99,84 +89,59 @@ router.post('/add', async (req, res) => {
       ocrExtractedText: ocrResult.text,
       ocrMatchScore: ocrResult.score,
       usageContext,
-      status,
+      status: trustScore < 40 ? 'flagged' : 'pending',
       trustScore,
       timestamp: new Date()
     });
 
     await newReview.save();
 
-    // --- AUTOMATED AI MESSAGE FOR ADMIN ---
-    const alertMessage = trustScore < 40 
-      ? `🚨 ALERT: Low Score (${trustScore}/100). ${user} submitted a potential FAKE bill for ${productName}.`
-      : `✅ CLEAR: High Score (${trustScore}/100). ${user}'s bill for ${productName} looks authentic.`;
-    
-    const alertType = trustScore < 40 ? 'danger' : 'success';
-
-    const newNotification = new Notification({
-      message: alertMessage,
-      type: alertType,
-      reviewId: newReview._id
-    });
-    
-    await newNotification.save();
-    
-    // --- ✉️ AUTOMATED THANK YOU EMAIL FOR USER ---
-    if (email) {
-      try {
-        const mailOptions = {
-          from: `"FeedTrace AI" <${process.env.EMAIL_USER}>`,
-          to: email,
-          subject: 'Thank You for Your FeedTrace Review! 🚀',
-          html: `
-            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
-              <div style="text-align: center; margin-bottom: 30px;">
-                <h1 style="color: #3b82f6; margin: 0; font-size: 28px;">FeedTrace</h1>
-                <p style="color: #64748b; margin-top: 5px; font-size: 14px;">The AI-Powered Trust Engine</p>
-              </div>
-              
-              <h2 style="color: #0f172a; font-size: 20px;">Hi ${user},</h2>
-              <p style="color: #475569; font-size: 16px; line-height: 1.6;">
-                Thank you for taking the time to submit a review for the <strong>${productName}</strong>. Your contribution helps build a safer, scam-free shopping experience for everyone!
-              </p>
-              
-              <div style="background-color: #f8fafc; padding: 20px; border-radius: 12px; margin: 25px 0; border-left: 4px solid #f59e0b;">
-                <h3 style="margin: 0 0 10px 0; color: #d97706; font-size: 16px;">What happens next?</h3>
-                <p style="margin: 0; color: #475569; font-size: 14px; line-height: 1.5;">
-                  Our AI Trust Engine is currently analyzing your review and scanning your proof of purchase. Once verified, your Trust Score will be generated and your review will be published to the community.
-                </p>
-              </div>
-              
-              <p style="color: #475569; font-size: 16px;">
-                You can track the status of your review on your <a href="http://localhost:5173/my-reviews" style="color: #3b82f6; text-decoration: none; font-weight: bold;">My Reviews Dashboard</a>.
-              </p>
-              
-              <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
-              
-              <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0;">
-                This is an automated message from FeedTrace. Please do not reply to this email.
-              </p>
-            </div>
-          `
-        };
-
-        await transporter.sendMail(mailOptions);
-        console.log("✉️ Confirmation email sent successfully to:", email);
-      } catch (emailErr) {
-        console.error("❌ Failed to send email:", emailErr.message);
-      }
-    }
-    // --------------------------------------------------------
-    
+    // --- 🚀 STEP 1: RESPOND TO USER IMMEDIATELY 🚀 ---
     res.status(201).json({ 
       message: 'Review submitted for verification', 
       review: newReview,
       warnings: flags 
     });
 
+    // --- 🚀 STEP 2: BACKGROUND TASKS (No 'await' here) 🚀 ---
+    
+    // Background Admin Notification
+    const alertMessage = trustScore < 40 
+      ? `🚨 ALERT: Low Score (${trustScore}/100) from ${user}.`
+      : `✅ CLEAR: High Score (${trustScore}/100) from ${user}.`;
+
+    new Notification({
+      message: alertMessage,
+      type: trustScore < 40 ? 'danger' : 'success',
+      reviewId: newReview._id
+    }).save().catch(err => console.error("Notification Error:", err));
+
+    // Background Email (Gmail service can be slow, so we don't wait for it)
+    if (email) {
+      const mailOptions = {
+        from: `"FeedTrace AI" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: 'Review Received! 🚀',
+        html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+              <h2 style="color: #3b82f6;">Hi ${user},</h2>
+              <p>Thank you for submitting a review for <strong>${productName}</strong>.</p>
+              <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; border-left: 4px solid #f59e0b; margin: 20px 0;">
+                <p style="margin: 0; font-size: 14px;">Our AI is currently verifying your purchase. Once verified, your review will be published.</p>
+              </div>
+              <p>Track your status: <a href="https://feedtrace-client.vercel.app/my-reviews" style="color: #3b82f6; font-weight: bold; text-decoration: none;">My Reviews Dashboard</a></p>
+            </div>
+          `
+      };
+
+      transporter.sendMail(mailOptions)
+        .then(() => console.log("✉️ Background email sent successfully"))
+        .catch(err => console.error("❌ Email failed:", err.message));
+    }
+
   } catch (err) {
-    console.error("Review Submit Error:", err);
-    res.status(500).json({ error: err.message });
+    console.error("Submit Error:", err);
+    if (!res.headersSent) res.status(500).json({ error: "Server Error" });
   }
 });
 
@@ -187,12 +152,8 @@ router.get('/user/:username', async (req, res) => {
     const reviews = await Review.find({ 
       user: { $regex: new RegExp("^" + username + "$", "i") } 
     }).sort({ timestamp: -1 });
-
     res.json(reviews);
-  } catch (err) {
-    console.error("Error fetching user reviews:", err);
-    res.status(500).json({ error: "Could not fetch reviews" });
-  }
+  } catch (err) { res.status(500).json({ error: "Could not fetch reviews" }); }
 });
 
 // --- 4. GET ALL REVIEWS ---
@@ -212,21 +173,15 @@ router.put('/status/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 6. DELETE REVIEW (ADMIN) ---
+// --- 6. DELETE REVIEW ---
 router.delete('/delete/:id', async (req, res) => {
   try {
-    const deletedReview = await Review.findByIdAndDelete(req.params.id);
-    if (!deletedReview) {
-      return res.status(404).json({ error: "Review not found" });
-    }
-    res.json({ message: 'Review Deleted Successfully' });
-  } catch (err) {
-    console.error("Delete Review Error:", err);
-    res.status(500).json({ error: err.message });
-  }
+    await Review.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Review Deleted' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 7. GET ADMIN NOTIFICATIONS ---
+// --- 7. NOTIFICATIONS ---
 router.get('/notifications', async (req, res) => {
   try {
     const alerts = await Notification.find().sort({ createdAt: -1 }).limit(20);
@@ -234,7 +189,6 @@ router.get('/notifications', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 8. DISMISS (DELETE) NOTIFICATION ---
 router.delete('/notifications/:id', async (req, res) => {
   try {
     await Notification.findByIdAndDelete(req.params.id);
