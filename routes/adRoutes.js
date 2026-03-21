@@ -2,14 +2,12 @@ const express = require('express');
 const router = express.Router();
 const Ad = require('../models/Ad');
 
-// 1. GET ACTIVE ADS (For the User Frontend)
+// 1. GET ACTIVE ADS (For User Frontend)
 router.get('/active', async (req, res) => {
   try {
-    // 🌟 Sort by newest first
     const activeAds = await Ad.find({ isActive: true }).sort({ createdAt: -1 });
-    res.status(200).json(activeAds || []); // Always return an array
+    res.status(200).json(activeAds || []);
   } catch (err) {
-    console.error("❌ Fetch Active Ads Error:", err);
     res.status(500).json({ error: "Failed to fetch active ads" });
   }
 });
@@ -20,67 +18,58 @@ router.get('/all', async (req, res) => {
     const ads = await Ad.find().sort({ createdAt: -1 });
     res.status(200).json(ads || []);
   } catch (err) { 
-    console.error("❌ Fetch All Ads Error:", err);
     res.status(500).json({ error: "Failed to fetch all ads" }); 
   }
 });
 
-// 3. ADD NEW AD (Admin)
+// 3. ADD NEW AD (Admin) - FIXED NAMES HERE 🚀
 router.post('/add', async (req, res) => {
   try {
-    const { title, imageUrl, link } = req.body;
+    // We pull the exact names sent by the frontend
+    const { sponsorName, bannerImage, couponCode, discountText } = req.body;
 
-    // 🚨 VALIDATION: Ensure we don't save broken data to Atlas
-    if (!title || !imageUrl) {
-      return res.status(400).json({ error: "Title and Image URL are required." });
+    // Validation using the correct schema names
+    if (!sponsorName || !bannerImage || !couponCode || !discountText) {
+      return res.status(400).json({ error: "All fields (Sponsor, Logo, Code, and Offer) are required." });
     }
 
     const newAd = new Ad({
-      title,
-      imageUrl,
-      link: link || '',
-      isActive: true // Default to active on creation
+      sponsorName,
+      bannerImage,
+      couponCode,
+      discountText,
+      isActive: true 
     });
 
     await newAd.save();
-    console.log("✅ Ad Created Successfully");
-    res.status(201).json({ message: "Ad created successfully", ad: newAd });
+    res.status(201).json({ message: "Campaign launched successfully!", ad: newAd });
   } catch (err) { 
-    console.error("❌ Create Ad Error:", err);
+    console.error("Create Ad Error:", err);
     res.status(500).json({ error: "Server error while creating ad" }); 
   }
 });
 
-// 4. DELETE AD (Admin)
+// 4. DELETE AD
 router.delete('/:id', async (req, res) => {
   try {
-    const deletedAd = await Ad.findByIdAndDelete(req.params.id);
-    if (!deletedAd) {
-      return res.status(404).json({ error: "Ad not found" });
-    }
+    await Ad.findByIdAndDelete(req.params.id);
     res.json({ message: "Ad deleted successfully" });
   } catch (err) { 
     res.status(500).json({ error: "Error deleting ad" }); 
   }
 });
 
-// 5. TOGGLE STATUS (Admin)
+// 5. TOGGLE STATUS
 router.put('/:id/toggle', async (req, res) => {
   try {
     const ad = await Ad.findById(req.params.id);
-    if (!ad) {
-      return res.status(404).json({ error: "Ad not found" });
-    }
+    if (!ad) return res.status(404).json({ error: "Ad not found" });
 
     ad.isActive = !ad.isActive;
     await ad.save();
-    
-    res.json({ 
-      message: `Ad is now ${ad.isActive ? 'Active' : 'Inactive'}`, 
-      isActive: ad.isActive 
-    });
+    res.json({ message: "Status updated", isActive: ad.isActive });
   } catch (err) { 
-    res.status(500).json({ error: "Error toggling ad status" }); 
+    res.status(500).json({ error: "Error toggling status" }); 
   }
 });
 
