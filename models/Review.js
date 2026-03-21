@@ -28,7 +28,7 @@ const reviewSchema = new mongoose.Schema({
   // --- Layer 5: Admin Status ---
   status: { 
     type: String, 
-    enum: ['pending', 'approved', 'rejected', 'flagged'], 
+    enum: ['pending', 'approved', 'rejected', 'flagged' , 'verified'], 
     default: 'pending' 
   },
   trustScore: { type: Number, default: 0 }, // Calculated score
