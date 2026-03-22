@@ -3,44 +3,28 @@ const router = express.Router();
 const Review = require('../models/Review');
 const Notification = require('../models/Notification'); 
 const Tesseract = require('tesseract.js');
-const nodemailer = require('nodemailer'); 
+const { Resend } = require('resend'); // 🚀 NEW: Professional Email API
 
-// --- 1. EMAIL TRANSPORTER SETUP ---
-// host/port 465 is the industry standard for secure production mailing
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true, 
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS // 16-character Google App Password (no spaces)
-  },
-  tls: {
-    // Helps prevent "self-signed certificate" errors on cloud hosting
-    rejectUnauthorized: false 
-  }
-});
+// --- 1. EMAIL SETUP (RESEND API) ---
+// This replaces Nodemailer to bypass Render's SMTP port blocking
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // --- ✉️ QUICK TEST ROUTE ---
-// Visit: https://feedtrace-api.onrender.com/api/reviews/test-email
-router.get('/test-email', async (req, res) => {
+// Visit: https://feedtrace-api.onrender.com/api/reviews/test-resend
+router.get('/test-resend', async (req, res) => {
   try {
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: process.env.EMAIL_USER, 
-      subject: 'FeedTrace Connection Test 🚀',
-      text: 'If you received this, your EMAIL configuration is 100% correct!'
-    };
-
-    await transporter.sendMail(mailOptions);
-    res.json({ message: "Success! Check your inbox." });
-  } catch (err) {
-    console.error("Email Test Error:", err);
-    res.status(500).json({ 
-      error: "Email failed", 
-      details: err.message,
-      check: "Ensure EMAIL_PASS has NO spaces and 2FA is on."
+    const { data, error } = await resend.emails.send({
+      from: 'FeedTrace <onboarding@resend.dev>',
+      to: process.env.EMAIL_USER, // Sends test to your configured email
+      subject: 'Resend API Connection Test 🚀',
+      html: '<strong>Success!</strong> Your FeedTrace email system is now permanently unblocked.'
     });
+
+    if (error) throw error;
+    res.json({ message: "Success! Check your inbox.", data });
+  } catch (err) {
+    console.error("Resend Test Error:", err);
+    res.status(500).json({ error: "Email failed", details: err.message });
   }
 });
 
@@ -85,7 +69,7 @@ router.post('/add', async (req, res) => {
       return res.status(400).json({ error: "Purchase date is older than 90 days." });
     }
 
-    // Heavy OCR Task (Stay awaited so the DB gets the initial trustScore)
+    // Heavy OCR Task
     let ocrResult = { text: '', score: 0 };
     let trustScore = 20; 
     let flags = [];
@@ -119,14 +103,13 @@ router.post('/add', async (req, res) => {
     await newReview.save();
 
     // 🚀 STEP 1: RESPOND TO USER IMMEDIATELY
-    // This stops the loading state for the user instantly.
     res.status(201).json({ 
       message: 'Review submitted for verification', 
       review: newReview,
       warnings: flags 
     });
 
-    // 🚀 STEP 2: BACKGROUND TASKS (Handled while user continues browsing)
+    // 🚀 STEP 2: BACKGROUND TASKS
     
     // Save Admin Notification
     new Notification({
@@ -135,10 +118,10 @@ router.post('/add', async (req, res) => {
       reviewId: newReview._id
     }).save().catch(err => console.error("Notification Error:", err));
 
-    // Send Background Email
+    // Send Background Email via Resend API
     if (email) {
-      const mailOptions = {
-        from: `"FeedTrace AI" <${process.env.EMAIL_USER}>`,
+      resend.emails.send({
+        from: 'FeedTrace <onboarding@resend.dev>',
         to: email,
         subject: 'Review Received! 🚀',
         html: `
@@ -148,11 +131,8 @@ router.post('/add', async (req, res) => {
               <p>Track your status: <a href="https://feedtrace-client.vercel.app/my-reviews" style="color: #3b82f6; font-weight: bold; text-decoration: none;">My Reviews Dashboard</a></p>
             </div>
           `
-      };
-
-      transporter.sendMail(mailOptions)
-        .then(() => console.log("✉️ Background email sent"))
-        .catch(err => console.error("❌ Email failed:", err.message));
+      }).then(() => console.log("✉️ Email sent via Resend API"))
+        .catch(err => console.error("❌ Resend Email failed:", err.message));
     }
 
   } catch (err) {
