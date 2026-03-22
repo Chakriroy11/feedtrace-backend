@@ -16,18 +16,17 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// --- 2. GET ALL REVIEWS (Fixes 404 for /api/reviews/all) ---
+// --- 2. GET ALL REVIEWS (Endpoint: /api/reviews/all) ---
 router.get('/all', async (req, res) => {
   try {
     const reviews = await Review.find().sort({ timestamp: -1 });
-    res.status(200).json(reviews); // Explicit 200 status
+    res.status(200).json(reviews);
   } catch (err) {
-    console.error("Fetch All Error:", err);
     res.status(500).json({ error: "Failed to fetch reviews" });
   }
 });
 
-// --- 3. ADMIN DASHBOARD STATS (Fixes 404 for /api/reviews/stats) ---
+// --- 3. DASHBOARD STATS (Endpoint: /api/reviews/stats) ---
 router.get('/stats', async (req, res) => {
   try {
     const reviews = await Review.find();
@@ -43,7 +42,7 @@ router.get('/stats', async (req, res) => {
   }
 });
 
-// --- 4. NOTIFICATIONS ROUTE (Fixes 404 for /api/reviews/notifications) ---
+// --- 4. NOTIFICATIONS (Endpoint: /api/reviews/notifications) ---
 router.get('/notifications', async (req, res) => {
   try {
     const alerts = await Notification.find().sort({ createdAt: -1 }).limit(10);
@@ -53,7 +52,23 @@ router.get('/notifications', async (req, res) => {
   }
 });
 
-// --- 5. ADD REVIEW ROUTE ---
+// --- 5. UPDATE STATUS (Endpoint: /api/reviews/status/:id) ---
+// 🚀 ADDED THIS: Your ReviewManager.jsx was calling this but it was missing!
+router.put('/status/:id', async (req, res) => {
+  try {
+    const { status, isVerifiedPurchase } = req.body;
+    const updatedReview = await Review.findByIdAndUpdate(
+      req.params.id,
+      { status, isVerifiedPurchase },
+      { new: true }
+    );
+    res.status(200).json(updatedReview);
+  } catch (err) {
+    res.status(500).json({ error: "Status update failed" });
+  }
+});
+
+// --- 6. ADD REVIEW ---
 router.post('/add', async (req, res) => {
   try {
     const { 
@@ -82,40 +97,31 @@ router.post('/add', async (req, res) => {
     });
 
     await newReview.save();
-
-    // Respond immediately
     res.status(201).json({ message: 'Review submitted', review: newReview });
 
-    // Background Tasks
+    // Background Tasks (Email)
     if (email) {
-      const mailOptions = {
+      transporter.sendMail({
         from: '"FeedTrace AI" <feedtraceoff@gmail.com>', 
         to: email, 
         subject: 'Review Received! 🚀',
-        html: `
-          <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-            <h2 style="color: #3b82f6;">Hi ${user},</h2>
-            <p>Your review for <strong>${productName}</strong> has been received and is being verified by our AI.</p>
-            <p>Trust Score: <strong>${trustScore}</strong></p>
-          </div>`
-      };
-      transporter.sendMail(mailOptions).catch(err => console.error("Mail Error:", err.message));
+        html: `<p>Hi ${user}, your review for ${productName} is being verified.</p>`
+      }).catch(e => console.error("Mail Error"));
     }
 
-    const newNotif = new Notification({
+    // Background Tasks (Notification)
+    new Notification({
       message: `New Review: ${user} (Score: ${trustScore})`,
       type: trustScore < 40 ? 'danger' : 'success',
       reviewId: newReview._id
-    });
-    await newNotif.save();
+    }).save();
 
   } catch (err) {
-    console.error("Route Error:", err);
     if (!res.headersSent) res.status(500).json({ error: "Server Error" });
   }
 });
 
-// --- 6. OCR HELPER ---
+// --- 7. OCR HELPER ---
 const performOCRCheck = async (imageBase64, orderId, purchaseDate) => {
   try {
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
@@ -125,24 +131,19 @@ const performOCRCheck = async (imageBase64, orderId, purchaseDate) => {
     
     let score = 0;
     if (cleanText.includes(orderId.toLowerCase())) score += 50;
-    
     const formattedDate = new Date(purchaseDate).toISOString().split('T')[0];
     if (cleanText.includes(formattedDate)) score += 30;
     
     return { text, score };
-  } catch (err) { 
-    console.error("OCR Helper Error:", err);
-    return { text: '', score: 0 }; 
-  }
+  } catch (err) { return { text: '', score: 0 }; }
 };
 
+// --- 8. DELETE ---
 router.delete('/delete/:id', async (req, res) => {
   try {
     await Review.findByIdAndDelete(req.params.id);
     res.json({ message: "Deleted" });
-  } catch (err) {
-    res.status(500).json({ error: "Delete failed" });
-  }
+  } catch (err) { res.status(500).json({ error: "Delete failed" }); }
 });
 
 module.exports = router;

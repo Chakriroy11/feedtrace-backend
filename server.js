@@ -16,35 +16,37 @@ const adRoutes = require('./routes/adRoutes');
 const app = express();
 
 // --- 2. CONFIGURE MIDDLEWARE ---
-// This allows your Vercel frontend to talk to your Render backend
 app.use(cors({
-  origin: true, // Allows all origins or specify your Vercel URL
+  origin: true, 
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// 🚀 CRITICAL: Increase limit to handle Base64 images for OCR
+// CRITICAL: Handle large Base64 OCR images
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // --- 3. DATABASE CONNECTION ---
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('✅ MongoDB Connected Successfully'))
+  .then(() => {
+    console.log('✅ MongoDB Connected Successfully');
+    // Log the database name to verify environment
+    console.log(`📡 DB Name: ${mongoose.connection.name}`);
+  })
   .catch((err) => {
     console.error('❌ MongoDB Connection Error:', err.message);
     process.exit(1); 
   });
 
 // --- 4. REGISTER API ROUTES ---
-// These prefixes must match what your Frontend calls
 app.use('/api/products', productRoutes);
-app.use('/api/reviews', reviewRoutes); // This handles /all, /stats, and /notifications
+app.use('/api/reviews', reviewRoutes); 
 app.use('/api/auth', authRoutes); 
 app.use('/api/vouchers', voucherRoutes);
 app.use('/api/ads', adRoutes);
 
-// --- 5. HEALTH CHECK ROUTE ---
+// --- 5. HEALTH CHECK & ROUTE VERIFIER ---
 app.get('/', (req, res) => {
   res.json({ 
     status: 'online',
@@ -54,15 +56,25 @@ app.get('/', (req, res) => {
   });
 });
 
-// --- 6. GLOBAL ERROR HANDLER ---
+// --- 6. CATCH-ALL 404 HANDLER ---
+// This will tell you if the frontend is calling the wrong URL
+app.use((req, res) => {
+  console.log(`⚠️ 404 - Not Found: ${req.method} ${req.url}`);
+  res.status(404).json({ error: `Route ${req.url} not found on this server.` });
+});
+
+// --- 7. GLOBAL ERROR HANDLER ---
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('🔥 Server Error:', err.stack);
   res.status(500).json({ error: 'Something went wrong on the server!' });
 });
 
-// --- 7. BIND TO PORT ---
+// --- 8. BIND TO PORT ---
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
+  console.log('--------------------------------------------------');
   console.log(`🚀 Server running on Port ${PORT}`);
-  console.log(`📡 Access via: https://feedtrace-api.onrender.com`);
+  console.log(`🏠 Local: http://localhost:${PORT}`);
+  console.log(`📡 Remote: https://feedtrace-api.onrender.com`);
+  console.log('--------------------------------------------------');
 });

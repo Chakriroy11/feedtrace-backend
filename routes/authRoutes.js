@@ -3,47 +3,44 @@ const router = express.Router();
 const User = require('../models/User'); 
 
 // --- 🚨 THE FIX: KILL THE GHOST INDEX 🚨 ---
-// This silently removes the old 'mobile' requirement from MongoDB's memory
+// We wrap this in a small timeout or wait for the connection in server.js 
+// but keeping it here is fine for a quick fix to remove 'mobile' requirements.
 User.collection.dropIndex('mobile_1').catch(err => {
-  // We ignore errors here because if the index is already gone, we don't care!
+    // If the index doesn't exist, we just ignore the error.
 });
-// ------------------------------------------
 
 // 1. SIGNUP
 router.post('/signup', async (req, res) => {
   console.log("📝 Signup Attempt:", req.body);
   
   try {
-    // 1. Destructure 'name' as well, just in case the frontend sends the old format
     const { username, name, email, password, secretKey } = req.body;
 
-    // 2. Map it so the database always gets what it expects
+    // Map username/name so the database always gets a valid string
     const finalUsername = username || name;
 
-    // 🚨 SAFETY NET: Prevent the 500 Crash!
+    // 🚨 SAFETY NET: Validation
     if (!finalUsername || !email || !password) {
-      console.log("❌ Missing required fields");
       return res.status(400).json({ error: "Username, email, and password are required." });
     }
 
-    // 3. Check if user exists
+    // Check if user exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ error: "User already exists with this email" });
     }
 
-    // 4. DETERMINE ROLE
+    // DETERMINE ROLE (Secret key for 2024 Admin)
     let role = 'user';
     if (secretKey === 'feedtrace_admin_2024') { 
       role = 'admin';
-      console.log("🔐 Admin Secret Key Matched! Creating Admin Account...");
+      console.log("🔐 Admin Secret Key Matched!");
     }
 
-    // 5. Create New User 
     const newUser = new User({
-      username: finalUsername, // Guaranteed to have a value now
+      username: finalUsername,
       email,
-      password, 
+      password, // Note: In production, use bcrypt to hash this!
       role: role
     });
 
@@ -57,25 +54,16 @@ router.post('/signup', async (req, res) => {
   }
 });
 
-// 2. LOGIN (Unchanged)
+// 2. LOGIN
 router.post('/login', async (req, res) => {
-  console.log("🔑 Login Attempt:", req.body);
-
   try {
     const { email, password } = req.body;
-
     const user = await User.findOne({ email });
-    if (!user) {
-      console.log("❌ User not found in DB");
-      return res.status(404).json({ error: "User not found" });
-    }
 
-    if (password !== user.password) {
-      console.log("❌ Password mismatch");
-      return res.status(400).json({ error: "Invalid password" });
-    }
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (password !== user.password) return res.status(400).json({ error: "Invalid password" });
 
-    console.log("✅ Login Success for:", user.username);
+    console.log("✅ Login Success:", user.username);
 
     res.json({
       message: "Login Successful",
@@ -83,20 +71,21 @@ router.post('/login', async (req, res) => {
       role: user.role, 
       userId: user._id
     });
-
   } catch (err) {
-    console.error("❌ Login Error:", err);
     res.status(500).json({ error: "Server error during login" });
   }
 });
 
-// 3. GET ALL USERS (For Admin Dashboard)
+// 3. GET ALL USERS (Fixes Dashboard 404 & Count)
+// This route is called by Dashboard.jsx to show the Total Users count
 router.get('/users', async (req, res) => {
   try {
-    const users = await User.find().select('-password');
-    res.json(users);
+    // We select everything EXCEPT the password for security
+    const users = await User.find().select('-password').sort({ createdAt: -1 });
+    res.status(200).json(users);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("❌ Fetch Users Error:", err);
+    res.status(500).json({ error: "Failed to fetch users list" });
   }
 });
 
