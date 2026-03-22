@@ -9,10 +9,10 @@ const nodemailer = require('nodemailer');
 const transporter = nodemailer.createTransport({
   host: 'smtp.sendgrid.net',
   port: 587,
-  secure: false, 
+  secure: false, // TLS
   auth: {
-    user: 'apikey', 
-    pass: process.env.EMAIL_PASS // Your NEW API Key from Render
+    user: 'apikey', // Keep as 'apikey'
+    pass: process.env.EMAIL_PASS // Your SG.xxxxxxxx Key from Render
   }
 });
 
@@ -20,10 +20,10 @@ const transporter = nodemailer.createTransport({
 router.get('/test-sendgrid', async (req, res) => {
   try {
     const mailOptions = {
-      from: '"FeedTrace AI" <YOUR_NEW_VERIFIED_EMAIL@gmail.com>', 
-      to: "YOUR_NEW_VERIFIED_EMAIL@gmail.com", 
+      from: '"FeedTrace AI" <feedtraceoff@gmail.com>', 
+      to: "feedtraceoff@gmail.com", 
       subject: 'SendGrid Test 🚀',
-      text: 'If you see this, your NEW SendGrid account is working!'
+      text: 'If you see this, the feedtraceoff@gmail.com account is working!'
     };
 
     await transporter.sendMail(mailOptions);
@@ -42,10 +42,13 @@ const performOCRCheck = async (imageBase64, orderId, purchaseDate) => {
     const buffer = Buffer.from(base64Data, 'base64');
     const { data: { text } } = await Tesseract.recognize(buffer, 'eng');
     const cleanText = text.toLowerCase();
+    
     let score = 0;
     if (cleanText.includes(orderId.toLowerCase())) score += 50;
+    
     const dateStr = new Date(purchaseDate).toISOString().split('T')[0];
     if (cleanText.includes(dateStr)) score += 30;
+    
     return { text, score };
   } catch (err) {
     console.error("OCR Error:", err);
@@ -81,41 +84,46 @@ router.post('/add', async (req, res) => {
     });
 
     await newReview.save();
+    
+    // Send response to user immediately
     res.status(201).json({ message: 'Review submitted', review: newReview });
 
-    // --- 🚀 NEW ACCOUNT BACKGROUND EMAIL ---
+    // --- 🚀 SENDGRID EMAIL LOGIC ---
     if (email) {
       const mailOptions = {
-        from: '"FeedTrace AI" <YOUR_NEW_VERIFIED_EMAIL@gmail.com>', 
+        from: '"FeedTrace AI" <feedtraceoff@gmail.com>', 
         to: email, 
         subject: 'Review Received! 🚀',
         html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #f9fafb;">
               <h2 style="color: #3b82f6;">Hi ${user},</h2>
-              <p>Thanks for reviewing <strong>${productName}</strong>. Our AI is verifying your purchase.</p>
-              <p style="margin-top: 20px;">Check your status here:</p>
+              <p>Thanks for reviewing <strong>${productName}</strong>. Our AI is currently verifying your purchase.</p>
+              <p style="margin-top: 20px;">You can track your verification status on your dashboard:</p>
               <a href="https://feedtrace-client.vercel.app/my-reviews" 
-                 style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                 style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; text-align: center;">
                  View My Reviews
               </a>
+              <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+              <p style="font-size: 11px; color: #9ca3af;">This is an automated message from FeedTrace AI.</p>
             </div>
           `
       };
 
-      console.log(`Sending email via NEW account to: ${email}...`);
+      console.log(`Email trigger: Sending to ${email}...`);
       transporter.sendMail(mailOptions)
-        .then(() => console.log(`✉️ SUCCESS: Sent to ${email}`))
-        .catch(err => console.error(`❌ NEW SENDGRID ERROR:`, err.message));
+        .then(() => console.log(`✉️ SUCCESS: Email delivered to ${email}`))
+        .catch(err => console.error(`❌ SENDGRID ERROR for ${email}:`, err.message));
     }
 
+    // Background Notification for Admin
     new Notification({
-      message: `Review from ${user} (Score: ${trustScore})`,
+      message: `Review from ${user} (Trust Score: ${trustScore})`,
       type: trustScore < 40 ? 'danger' : 'success',
       reviewId: newReview._id
-    }).save().catch(err => console.error(err));
+    }).save().catch(err => console.error("Admin Notification failed:", err.message));
 
   } catch (err) {
-    console.error(err);
+    console.error("Critical Add Route Error:", err);
     if (!res.headersSent) res.status(500).json({ error: "Server Error" });
   }
 });
