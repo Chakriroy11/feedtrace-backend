@@ -9,54 +9,40 @@ const nodemailer = require('nodemailer');
 const transporter = nodemailer.createTransport({
   host: 'smtp.sendgrid.net',
   port: 587,
-  secure: false, // TLS
+  secure: false, 
   auth: {
-    user: 'apikey', // Keep as 'apikey'
-    pass: process.env.EMAIL_PASS // Your SG.xxxxxxxx Key from Render
+    user: 'apikey', 
+    pass: process.env.EMAIL_PASS 
   }
 });
 
-// --- ✉️ CONNECTION TEST ROUTE ---
-router.get('/test-sendgrid', async (req, res) => {
+// --- 2. ADMIN DASHBOARD STATS (Fixes 404) ---
+router.get('/stats', async (req, res) => {
   try {
-    const mailOptions = {
-      from: '"FeedTrace AI" <feedtraceoff@gmail.com>', 
-      to: "feedtraceoff@gmail.com", 
-      subject: 'SendGrid Test 🚀',
-      text: 'If you see this, the feedtraceoff@gmail.com account is working!'
+    const reviews = await Review.find();
+    const stats = {
+      total: reviews.length,
+      pending: reviews.filter(r => r.status === 'pending').length,
+      flagged: reviews.filter(r => r.status === 'flagged').length,
+      verified: reviews.filter(r => r.status === 'approved' || r.isVerifiedPurchase).length
     };
-
-    await transporter.sendMail(mailOptions);
-    res.json({ message: "Success! New SendGrid connection is active." });
+    res.json(stats);
   } catch (err) {
-    console.error("❌ SendGrid Test Error:", err.message);
-    res.status(500).json({ error: "Connection failed", details: err.message });
+    res.status(500).json({ error: "Failed to fetch stats" });
   }
 });
 
-// --- LAYER 3 HELPER: OCR CHECK ---
-const performOCRCheck = async (imageBase64, orderId, purchaseDate) => {
+// --- 3. NOTIFICATIONS ROUTE (Fixes 404) ---
+router.get('/notifications', async (req, res) => {
   try {
-    if (!imageBase64) return { text: '', score: 0 };
-    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-    const buffer = Buffer.from(base64Data, 'base64');
-    const { data: { text } } = await Tesseract.recognize(buffer, 'eng');
-    const cleanText = text.toLowerCase();
-    
-    let score = 0;
-    if (cleanText.includes(orderId.toLowerCase())) score += 50;
-    
-    const dateStr = new Date(purchaseDate).toISOString().split('T')[0];
-    if (cleanText.includes(dateStr)) score += 30;
-    
-    return { text, score };
+    const alerts = await Notification.find().sort({ createdAt: -1 }).limit(10);
+    res.json(alerts);
   } catch (err) {
-    console.error("OCR Error:", err);
-    return { text: 'Error extracting text', score: 0 };
+    res.status(500).json({ error: "Failed to fetch notifications" });
   }
-};
+});
 
-// --- 2. ADD REVIEW ROUTE ---
+// --- 4. ADD REVIEW ROUTE (With Email) ---
 router.post('/add', async (req, res) => {
   try {
     const { 
@@ -67,6 +53,7 @@ router.post('/add', async (req, res) => {
     let ocrResult = { text: '', score: 0 };
     let trustScore = 20; 
     if (bill) {
+      // (Assuming performOCRCheck helper is defined below)
       ocrResult = await performOCRCheck(bill, orderId, purchaseDate);
       trustScore += ocrResult.score;
     }
@@ -84,48 +71,53 @@ router.post('/add', async (req, res) => {
     });
 
     await newReview.save();
-    
-    // Send response to user immediately
     res.status(201).json({ message: 'Review submitted', review: newReview });
 
-    // --- 🚀 SENDGRID EMAIL LOGIC ---
     if (email) {
       const mailOptions = {
         from: '"FeedTrace AI" <feedtraceoff@gmail.com>', 
         to: email, 
         subject: 'Review Received! 🚀',
-        html: `
-            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #f9fafb;">
-              <h2 style="color: #3b82f6;">Hi ${user},</h2>
-              <p>Thanks for reviewing <strong>${productName}</strong>. Our AI is currently verifying your purchase.</p>
-              <p style="margin-top: 20px;">You can track your verification status on your dashboard:</p>
-              <a href="https://feedtrace-client.vercel.app/my-reviews" 
-                 style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; text-align: center;">
-                 View My Reviews
-              </a>
-              <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-              <p style="font-size: 11px; color: #9ca3af;">This is an automated message from FeedTrace AI.</p>
-            </div>
-          `
+        html: `<div style="font-family: sans-serif; padding: 20px;"><h2>Hi ${user},</h2><p>Review received for ${productName}. AI is verifying...</p></div>`
       };
-
-      console.log(`Email trigger: Sending to ${email}...`);
-      transporter.sendMail(mailOptions)
-        .then(() => console.log(`✉️ SUCCESS: Email delivered to ${email}`))
-        .catch(err => console.error(`❌ SENDGRID ERROR for ${email}:`, err.message));
+      transporter.sendMail(mailOptions).catch(err => console.error("Mail Error:", err.message));
     }
 
-    // Background Notification for Admin
     new Notification({
-      message: `Review from ${user} (Trust Score: ${trustScore})`,
+      message: `New Review: ${user} (Score: ${trustScore})`,
       type: trustScore < 40 ? 'danger' : 'success',
       reviewId: newReview._id
-    }).save().catch(err => console.error("Admin Notification failed:", err.message));
+    }).save();
 
   } catch (err) {
-    console.error("Critical Add Route Error:", err);
+    console.error(err);
     if (!res.headersSent) res.status(500).json({ error: "Server Error" });
   }
+});
+
+// --- 5. OCR HELPER ---
+const performOCRCheck = async (imageBase64, orderId, purchaseDate) => {
+  try {
+    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64Data, 'base64');
+    const { data: { text } } = await Tesseract.recognize(buffer, 'eng');
+    const cleanText = text.toLowerCase();
+    let score = 0;
+    if (cleanText.includes(orderId.toLowerCase())) score += 50;
+    if (cleanText.includes(new Date(purchaseDate).toISOString().split('T')[0])) score += 30;
+    return { text, score };
+  } catch (err) { return { text: '', score: 0 }; }
+};
+
+// --- 6. STANDARD GET/DELETE ROUTES ---
+router.get('/all', async (req, res) => {
+  const reviews = await Review.find().sort({ timestamp: -1 });
+  res.json(reviews);
+});
+
+router.delete('/delete/:id', async (req, res) => {
+  await Review.findByIdAndDelete(req.params.id);
+  res.json({ message: "Deleted" });
 });
 
 module.exports = router;
