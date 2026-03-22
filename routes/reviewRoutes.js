@@ -3,30 +3,10 @@ const router = express.Router();
 const Review = require('../models/Review');
 const Notification = require('../models/Notification'); 
 const Tesseract = require('tesseract.js');
-const { Resend } = require('resend'); // 🚀 NEW: Professional Email API
+const { Resend } = require('resend');
 
 // --- 1. EMAIL SETUP (RESEND API) ---
-// This replaces Nodemailer to bypass Render's SMTP port blocking
 const resend = new Resend(process.env.RESEND_API_KEY);
-
-// --- ✉️ QUICK TEST ROUTE ---
-// Visit: https://feedtrace-api.onrender.com/api/reviews/test-resend
-router.get('/test-resend', async (req, res) => {
-  try {
-    const { data, error } = await resend.emails.send({
-      from: 'FeedTrace <onboarding@resend.dev>',
-      to: process.env.EMAIL_USER, // Sends test to your configured email
-      subject: 'Resend API Connection Test 🚀',
-      html: '<strong>Success!</strong> Your FeedTrace email system is now permanently unblocked.'
-    });
-
-    if (error) throw error;
-    res.json({ message: "Success! Check your inbox.", data });
-  } catch (err) {
-    console.error("Resend Test Error:", err);
-    res.status(500).json({ error: "Email failed", details: err.message });
-  }
-});
 
 // --- LAYER 3 HELPER: OCR CHECK ---
 const performOCRCheck = async (imageBase64, orderId, purchaseDate) => {
@@ -51,7 +31,7 @@ const performOCRCheck = async (imageBase64, orderId, purchaseDate) => {
   }
 };
 
-// --- 2. ADD REVIEW ROUTE (OPTIMIZED) ---
+// --- 2. ADD REVIEW ROUTE ---
 router.post('/add', async (req, res) => {
   try {
     const { 
@@ -102,7 +82,7 @@ router.post('/add', async (req, res) => {
 
     await newReview.save();
 
-    // 🚀 STEP 1: RESPOND TO USER IMMEDIATELY
+    // 🚀 STEP 1: RESPOND TO USER IMMEDIATELY (Fixes Frontend Lag)
     res.status(201).json({ 
       message: 'Review submitted for verification', 
       review: newReview,
@@ -111,14 +91,14 @@ router.post('/add', async (req, res) => {
 
     // 🚀 STEP 2: BACKGROUND TASKS
     
-    // Save Admin Notification
+    // Admin Notification
     new Notification({
       message: trustScore < 40 ? `🚨 ALERT: Low Score (${trustScore}/100) from ${user}.` : `✅ CLEAR: High Score (${trustScore}/100) from ${user}.`,
       type: trustScore < 40 ? 'danger' : 'success',
       reviewId: newReview._id
     }).save().catch(err => console.error("Notification Error:", err));
 
-    // Send Background Email via Resend API
+    // Send Background Email via Resend API (Unblockable by Render)
     if (email) {
       resend.emails.send({
         from: 'FeedTrace <onboarding@resend.dev>',
