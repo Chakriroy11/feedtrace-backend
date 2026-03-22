@@ -6,11 +6,41 @@ const Tesseract = require('tesseract.js');
 const nodemailer = require('nodemailer'); 
 
 // --- 1. EMAIL TRANSPORTER SETUP ---
+// host/port 465 is the industry standard for secure production mailing
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true, 
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
+    pass: process.env.EMAIL_PASS // 16-character Google App Password (no spaces)
+  },
+  tls: {
+    // Helps prevent "self-signed certificate" errors on cloud hosting
+    rejectUnauthorized: false 
+  }
+});
+
+// --- ✉️ QUICK TEST ROUTE ---
+// Visit: https://feedtrace-api.onrender.com/api/reviews/test-email
+router.get('/test-email', async (req, res) => {
+  try {
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: process.env.EMAIL_USER, 
+      subject: 'FeedTrace Connection Test 🚀',
+      text: 'If you received this, your EMAIL configuration is 100% correct!'
+    };
+
+    await transporter.sendMail(mailOptions);
+    res.json({ message: "Success! Check your inbox." });
+  } catch (err) {
+    console.error("Email Test Error:", err);
+    res.status(500).json({ 
+      error: "Email failed", 
+      details: err.message,
+      check: "Ensure EMAIL_PASS has NO spaces and 2FA is on."
+    });
   }
 });
 
@@ -18,12 +48,9 @@ const transporter = nodemailer.createTransport({
 const performOCRCheck = async (imageBase64, orderId, purchaseDate) => {
   try {
     if (!imageBase64) return { text: '', score: 0 };
-    
-    // Remove header to get pure base64
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
     const buffer = Buffer.from(base64Data, 'base64');
 
-    // Tesseract processing (CPU heavy)
     const { data: { text } } = await Tesseract.recognize(buffer, 'eng');
     const cleanText = text.toLowerCase();
 
@@ -40,7 +67,7 @@ const performOCRCheck = async (imageBase64, orderId, purchaseDate) => {
   }
 };
 
-// --- 2. ADD REVIEW ROUTE (OPTIMIZED FOR SPEED) ---
+// --- 2. ADD REVIEW ROUTE (OPTIMIZED) ---
 router.post('/add', async (req, res) => {
   try {
     const { 
@@ -49,26 +76,22 @@ router.post('/add', async (req, res) => {
       usageContext 
     } = req.body;
 
-    // --- Fast Validations ---
+    // Fast Validations
     const wordCount = comment.trim().split(/\s+/).length;
-    if (wordCount < 10) { 
-      return res.status(400).json({ error: "Review is too short. Please write at least 10 words." });
-    }
+    if (wordCount < 10) return res.status(400).json({ error: "Review must be at least 10 words." });
 
     const purchase = new Date(purchaseDate);
     if (Math.ceil(Math.abs(new Date() - purchase) / (1000 * 60 * 60 * 24)) > 90) {
       return res.status(400).json({ error: "Purchase date is older than 90 days." });
     }
 
-    // --- Heavy OCR Task ---
+    // Heavy OCR Task (Stay awaited so the DB gets the initial trustScore)
     let ocrResult = { text: '', score: 0 };
-    let trustScore = 20; // Base score
+    let trustScore = 20; 
     let flags = [];
 
     if (bill) {
-      console.log("Processing OCR...");
       ocrResult = await performOCRCheck(bill, orderId, purchaseDate);
-      
       if (ocrResult.score === 0) {
         flags.push("CRITICAL: Invalid bill image.");
         trustScore = 0; 
@@ -77,11 +100,10 @@ router.post('/add', async (req, res) => {
       }
     }
 
-    if (usageContext && usageContext.reason && usageContext.issue && usageContext.feature) {
+    if (usageContext?.reason && usageContext?.issue && usageContext?.feature) {
       if (trustScore > 0) trustScore += 20; 
     }
 
-    // --- Save to DB ---
     const newReview = new Review({
       productId, productName, user, email, rating, comment, 
       purchaseDate, platform, orderId,
@@ -96,27 +118,24 @@ router.post('/add', async (req, res) => {
 
     await newReview.save();
 
-    // --- 🚀 STEP 1: RESPOND TO USER IMMEDIATELY 🚀 ---
+    // 🚀 STEP 1: RESPOND TO USER IMMEDIATELY
+    // This stops the loading state for the user instantly.
     res.status(201).json({ 
       message: 'Review submitted for verification', 
       review: newReview,
       warnings: flags 
     });
 
-    // --- 🚀 STEP 2: BACKGROUND TASKS (No 'await' here) 🚀 ---
+    // 🚀 STEP 2: BACKGROUND TASKS (Handled while user continues browsing)
     
-    // Background Admin Notification
-    const alertMessage = trustScore < 40 
-      ? `🚨 ALERT: Low Score (${trustScore}/100) from ${user}.`
-      : `✅ CLEAR: High Score (${trustScore}/100) from ${user}.`;
-
+    // Save Admin Notification
     new Notification({
-      message: alertMessage,
+      message: trustScore < 40 ? `🚨 ALERT: Low Score (${trustScore}/100) from ${user}.` : `✅ CLEAR: High Score (${trustScore}/100) from ${user}.`,
       type: trustScore < 40 ? 'danger' : 'success',
       reviewId: newReview._id
     }).save().catch(err => console.error("Notification Error:", err));
 
-    // Background Email (Gmail service can be slow, so we don't wait for it)
+    // Send Background Email
     if (email) {
       const mailOptions = {
         from: `"FeedTrace AI" <${process.env.EMAIL_USER}>`,
@@ -125,17 +144,14 @@ router.post('/add', async (req, res) => {
         html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
               <h2 style="color: #3b82f6;">Hi ${user},</h2>
-              <p>Thank you for submitting a review for <strong>${productName}</strong>.</p>
-              <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; border-left: 4px solid #f59e0b; margin: 20px 0;">
-                <p style="margin: 0; font-size: 14px;">Our AI is currently verifying your purchase. Once verified, your review will be published.</p>
-              </div>
+              <p>Thanks for reviewing <strong>${productName}</strong>. Our AI is verifying your purchase.</p>
               <p>Track your status: <a href="https://feedtrace-client.vercel.app/my-reviews" style="color: #3b82f6; font-weight: bold; text-decoration: none;">My Reviews Dashboard</a></p>
             </div>
           `
       };
 
       transporter.sendMail(mailOptions)
-        .then(() => console.log("✉️ Background email sent successfully"))
+        .then(() => console.log("✉️ Background email sent"))
         .catch(err => console.error("❌ Email failed:", err.message));
     }
 
