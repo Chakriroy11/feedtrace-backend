@@ -6,32 +6,31 @@ const Tesseract = require('tesseract.js');
 const nodemailer = require('nodemailer'); 
 
 // --- 1. SENDGRID TRANSPORTER SETUP ---
-// Using port 587 (TLS) which is standard for SendGrid
 const transporter = nodemailer.createTransport({
   host: 'smtp.sendgrid.net',
   port: 587,
   secure: false, // TLS
   auth: {
-    user: 'apikey', // This must be the literal string 'apikey'
-    pass: process.env.EMAIL_PASS // Your SendGrid API Key (starts with SG.)
+    user: 'apikey', // DO NOT CHANGE: Always 'apikey' for SendGrid
+    pass: process.env.EMAIL_PASS // Your SG.xxxxxxxx API Key from Render Env
   }
 });
 
-// --- ✉️ QUICK CONNECTION TEST ROUTE ---
+// --- ✉️ CONNECTION TEST ROUTE ---
 router.get('/test-sendgrid', async (req, res) => {
   try {
     const mailOptions = {
-      from: `"FeedTrace Test" <${process.env.EMAIL_USER}>`, // Must be your Verified Sender email
-      to: process.env.EMAIL_USER, 
+      from: `"FeedTrace AI" <chandakachakri06@gmail.com>`, // Use your verified sender directly
+      to: "chandakachakri06@gmail.com", 
       subject: 'SendGrid Test 🚀',
-      text: 'If you see this, SendGrid is working!'
+      text: 'If you see this in your inbox, SendGrid is 100% working!'
     };
 
     await transporter.sendMail(mailOptions);
-    res.json({ message: "Success! SendGrid is connected." });
+    res.json({ message: "Success! Connection is active." });
   } catch (err) {
-    console.error("SendGrid Test Error:", err);
-    res.status(500).json({ error: "SendGrid failed", details: err.message });
+    console.error("❌ SendGrid Test Error:", err.message);
+    res.status(500).json({ error: "Connection failed", details: err.message });
   }
 });
 
@@ -88,26 +87,36 @@ router.post('/add', async (req, res) => {
 
     await newReview.save();
 
+    // Respond immediately to UI
     res.status(201).json({ message: 'Review submitted', review: newReview });
 
-    // --- BACKGROUND EMAIL LOGIC (SENDGRID) ---
+    // --- 🚀 DYNAMIC BACKGROUND EMAIL LOGIC ---
     if (email) {
       const mailOptions = {
-        from: `"FeedTrace AI" <${process.env.EMAIL_USER}>`, // Verified Sender Email
-        to: email,
+        // Must match your SendGrid "Single Sender" verified email
+        from: '"FeedTrace AI" <chandakachakri06@gmail.com>', 
+        to: email, // This sends it to whatever user logged in (e.g. friend@gmail.com)
         subject: 'Review Received! 🚀',
         html: `
-            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #f9fafb;">
               <h2 style="color: #3b82f6;">Hi ${user},</h2>
-              <p>Thanks for reviewing <strong>${productName}</strong>. Our AI is verifying your purchase.</p>
-              <p>Track your status: <a href="https://feedtrace-client.vercel.app/my-reviews">Dashboard</a></p>
+              <p>Thanks for reviewing <strong>${productName}</strong>. Our AI is currently verifying your purchase details.</p>
+              <p style="margin-top: 20px;">You can track your verification status on your dashboard:</p>
+              <a href="https://feedtrace-client.vercel.app/my-reviews" 
+                 style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                 View My Reviews
+              </a>
+              <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+              <p style="font-size: 12px; color: #6b7280;">This is an automated notification from FeedTrace AI.</p>
             </div>
           `
       };
 
+      // Trigger the send
+      console.log(`Attempting to send email to: ${email}...`);
       transporter.sendMail(mailOptions)
-        .then(() => console.log("✉️ Email sent via SendGrid"))
-        .catch(err => console.error("❌ SendGrid Error:", err.message));
+        .then(() => console.log(`✉️ SUCCESS: Email sent to ${email}`))
+        .catch(err => console.error(`❌ SENDGRID ERROR for ${email}:`, err.message));
     }
 
     // Admin Notification
@@ -115,10 +124,10 @@ router.post('/add', async (req, res) => {
       message: `Review from ${user} (Score: ${trustScore})`,
       type: trustScore < 40 ? 'danger' : 'success',
       reviewId: newReview._id
-    }).save().catch(err => console.error(err));
+    }).save().catch(err => console.error("Admin Notification failed:", err.message));
 
   } catch (err) {
-    console.error(err);
+    console.error("Critical Route Error:", err);
     if (!res.headersSent) res.status(500).json({ error: "Server Error" });
   }
 });
